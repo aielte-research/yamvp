@@ -556,7 +556,7 @@ def venn(
     colors: Optional[Sequence[Union[str, tuple]]] = None,
     title: Optional[str] = None,
     outfile: Optional[str] = None,
-    outline_alpha: float = 0.5, 
+    dpi: int = 100,
     rotate_region_labels: Optional[bool] = None,
     **kwargs,
 ) -> Optional[Figure]:
@@ -573,11 +573,13 @@ def venn(
         Names of the sets (length N).
     colors : list[str|tuple], optional
         Colors for each set. Defaults to Matplotlib prop cycle.
-    title, outfile : optional
-        Plot title and optional output path. If `outfile` is given, the figure
+    title : optional
+        Plot title
+    outfile : optional
+        Optional output path. If `outfile` is given, the figure
         is saved and the function returns None.
-    outline_alpha : float
-        Transparency for set outlines (0..1). This is a GLOBAL setting.
+    dpi : int
+        DPI for saving the figure (if `outfile` is given).
     rotate_region_labels : bool
         If True, compute a per-region “ideal direction” from detected
         corners (3 -> longest edge; 4 -> longer of lines connecting side midpoints,
@@ -667,13 +669,13 @@ def venn(
             )
         )
 
-    # Pass 2: outlines with global `outline_alpha`
+    # Pass 2: outlines with global `alpha` 0.5 on top
     for (cx, cy), (rx, ry), ang, col in zip(geom["centers"], geom["radii"], geom["angles"], rgbs):
         ax.add_patch(
             Ellipse(
                 (cx, cy), 2 * rx, 2 * ry, angle=ang,
                 fill=False, lw=outline_lw,
-                edgecolor=(col[0], col[1], col[2], float(outline_alpha)),
+                edgecolor=(col[0], col[1], col[2], 0.5),
                 zorder=5.0
             )
         )
@@ -866,7 +868,7 @@ def venn(
         ax.set_title(title, fontsize=20)
 
     if outfile:
-        fig.savefig(outfile, dpi=350, bbox_inches="tight")
+        fig.savefig(outfile, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
         return None
 
