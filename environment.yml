@@ -1,0 +1,9 @@
+name: yamvp
+channels:
+  - anaconda
+dependencies:
+  - python=3.12
+  - twine
+  - wheel
+  - numpy
+  - matplotlib
