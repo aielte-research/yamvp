@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name="yamvp",
-    version="0.1",
+    version="0.2",
     author="Bálint Csanády",
     python_requires='>3.6',
     author_email="csbalint@protonmail.ch",

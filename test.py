@@ -9,7 +9,7 @@ if __name__ == "__main__":
     # 4-set Random
     rand4 = np.random.randint(0, 1000, size=(2, 2, 2, 2))
     
-    rand4[1,0,1,0] = 42
+    rand4[1,1,0,0] = 42
 
     fig = venn(rand4, ["A", "B", "C", "D"])
     fig.savefig("img/rand4_demo.png", dpi=100, bbox_inches="tight")
@@ -54,4 +54,16 @@ if __name__ == "__main__":
     venn(vals5, ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"], outfile = "img/venn5_demo.png")
     
     # 4-set Colors
-    venn(vals4, ["Alpha", "Beta", "Gamma", "Delta"], colors=["red", "green", "blue", "yellow"], outfile = "img/venn4_demo_colors.png")
+    venn(vals3, ["Alpha", "Beta", "Gamma"], colors=["red", "green", "blue"], outfile = "img/venn3_demo_colors.png")
+    
+    # color mixing    
+    venn(vals4, ["Alpha", "Beta", "Gamma", "Delta"], color_mixing = "average", outfile="img/venn4_demo_colors_average_mixing.png")
+    
+    venn(vals4, ["Alpha", "Beta", "Gamma", "Delta"], color_mixing = "alpha", outfile = "img/venn4_demo_colors_alpha_mixing.png")       
+    
+    def color_mix_multiply(colors):
+        arr = np.stack([np.array(c, float) for c in colors], axis=0)
+        return np.prod(arr, axis=0)
+    
+    venn(vals4, ["Alpha", "Beta", "Gamma", "Delta"], color_mixing=color_mix_multiply, outfile="img/venn4_demo_colors_multiply_mixing.png", text_color="white")
+

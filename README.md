@@ -2,18 +2,18 @@
 [![pypi](https://img.shields.io/pypi/v/yamvp.svg)](https://pypi.org/project/yamvp/)
 # YAMVP - Yet Another Matplotlib Venn-diagram Plotter
 ## Overview
-This module provides a function to create matplotlib figures containing ellipse-based Venn-diagrams with up to 5 classes.
+This module provides a function to create Matplotlib figures containing ellipse-based Venn-diagrams with up to 5 classes.
 
 The main goal was to provide a simple interface and good looks.
 
-For examle, class colors are averaged instead of simply using alpha blending, making the intersection colors invariant to the order in which the ellipses are drawn.  
+For example, color mixing of the class intersections does not simply rely on alpha stacking.  
 
 ## Installation
 ```
 pip install yamvp
 ```
 
-## Basic usage
+## Basic Usage
 ```python
 from yamvp import venn
 import numpy as np
@@ -21,8 +21,8 @@ import numpy as np
 #Fill a 4-dim 2x2x2x2 array with random values
 rand4 = np.random.randint(0, 1000, size=(2, 2, 2, 2))
     
-#Set the value at A∩C to 42
-rand4[1,0,1,0] = 42
+#Set the value at A∩B to 42
+rand4[1,1,0,0] = 42
 
 #Create the Venn-diagram
 fig = venn(rand4, ["A", "B", "C", "D"])
@@ -84,11 +84,36 @@ venn(vals5, ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"], outfile = "venn5_dem
 ```
 ![venn5_demo](https://github.com/aielte-research/yamvp/blob/master/img/venn5_demo.png?raw=true "venn5_demo")
 
-## Custom colors
+## Additional Color Mixing Options
+### Average
+Each intersection color is the mean of the corresponding class colors.
 ```python
-venn(vals4, ["Alpha", "Beta", "Gamma", "Delta"], colors=["red", "green", "blue", "yellow"], outfile = "venn4_demo_colors.png")
+venn(vals4, ["Alpha", "Beta", "Gamma", "Delta"], color_mixing = "average", outfile="venn4_demo_colors_average_mixing.png")
 ```
-![venn4_demo_colors](https://github.com/aielte-research/yamvp/blob/master/img/venn4_demo_colors.png?raw=true "venn4_demo_colors")
+![venn4_demo_colors_average_mixing](https://github.com/aielte-research/yamvp/blob/master/img/venn4_demo_colors_average_mixing.png?raw=true "venn4_demo_colors_average_mixing")
+
+### Alpha Stacking
+This would happen, if we simply stacked the ellipses with opacity=0.5. The result is dependent on the order in which the ellipses are drawn. 
+```python
+venn(vals4, ["Alpha", "Beta", "Gamma", "Delta"], color_mixing = "alpha", outfile = "venn4_demo_colors_alpha_mixing.png")      
+```
+![venn4_demo_colors_alpha_mixing](https://github.com/aielte-research/yamvp/blob/master/img/venn4_demo_colors_alpha_mixing.png?raw=true "venn4_demo_colors_alpha_mixing")
+
+### Custom Mixing Callback 
+```python
+def color_mix_multiply(colors):
+    arr = np.stack([np.array(c, float) for c in colors], axis=0)
+    return np.prod(arr, axis=0)
+
+venn(vals4, ["Alpha", "Beta", "Gamma", "Delta"], color_mixing=color_mix_multiply, outfile="venn4_demo_colors_multiply_mixing.png", text_color="white")     
+```
+![venn4_demo_colors_multiply_mixing](https://github.com/aielte-research/yamvp/blob/master/img/venn4_demo_colors_multiply_mixing.png?raw=true "venn4_demo_colors_multiply_mixing")
+
+## Custom Class Colors
+```python
+venn(vals3, ["Alpha", "Beta", "Gamma"], colors=["red", "green", "blue"], outfile = "venn3_demo_colors.png")
+```
+![venn3_demo_colors](https://github.com/aielte-research/yamvp/blob/master/img/venn3_demo_colors.png?raw=true "venn3_demo_colors")
 
 ## License
 This project is licensed under the MIT License (c) 2025 Bálint Csanády, aielte-research. See the LICENSE file for details.

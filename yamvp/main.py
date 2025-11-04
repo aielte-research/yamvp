@@ -14,7 +14,7 @@ This module also runs a small self-test when executed as a script, producing dem
 PNGs and PDFs for 1,2,3,4,5-set cases in /mnt/data.
 """
 
-from typing import Optional, Sequence, Union, Tuple, List, Dict
+from typing import Optional, Sequence, Union, Tuple, List, Dict, Callable
 import itertools
 import numpy as np
 import matplotlib.pyplot as plt
@@ -55,21 +55,38 @@ def _rgb(color: Union[str, tuple]) -> np.ndarray:
     return np.array(to_rgb(color), float)
 
 
-def _ellipse_mask(
-    X: np.ndarray, Y: np.ndarray,
-    center_x: float, center_y: float,
-    radius_x: float, radius_y: float,
-    angle_deg: float,
-) -> np.ndarray:
-    """Boolean mask for a rotated ellipse."""
-    theta = np.deg2rad(angle_deg)
-    cos_t, sin_t = np.cos(theta), np.sin(theta)
-    x = X - float(center_x)
-    y = Y - float(center_y)
-    xr =  x * cos_t + y * sin_t
-    yr = -x * sin_t + y * cos_t
-    return (xr / float(radius_x)) ** 2 + (yr / float(radius_y)) ** 2 <= 1.0
+def _color_mix_average(colors: Sequence[np.ndarray]) -> np.ndarray:
+    """
+    Default color mixing: simple average of the provided RGB colors.
+    """
+    if not colors:
+        return np.zeros(3, float)
+    arr = np.stack([np.array(c, float) for c in colors], axis=0)
+    return arr.mean(axis=0)
 
+
+def _color_mix_alpha_stack(colors: Sequence[np.ndarray], alpha: float = 0.5) -> np.ndarray:
+    """
+    Mix colors by stacking them with a fixed per-layer alpha.
+    """
+    if not colors:
+        return np.zeros(3, float)
+    a = float(alpha)
+    a = max(0.0, min(1.0, a))
+    c = np.array(colors[0], float)
+    for col in colors[1:]:
+        col_arr = np.array(col, float)
+        c = c * (1.0 - a) + col_arr * a
+    return c
+
+def _color_mix_subtractive(colors):
+    """
+    Mix colors by subtracive mixing.
+    """
+    if not colors:
+        return np.zeros(3, float)
+    arr = np.stack([np.array(c, float) for c in colors], axis=0)
+    return np.abs(1.0 - (np.prod(1-arr, axis=0))*(len(colors)**0.25))
 
 def _ellipse_field(
     X: np.ndarray, Y: np.ndarray,
@@ -83,13 +100,20 @@ def _ellipse_field(
     Boundary is S ~= 1.
     """
     theta = np.deg2rad(angle_deg)
-    cos_t, sin_t = np.cos(theta), np.sin(theta)
     x = X - float(center_x)
     y = Y - float(center_y)
-    xr =  x * cos_t + y * sin_t
-    yr = -x * sin_t + y * cos_t
+    xr =  x * np.cos(theta) + y * np.sin(theta)
+    yr = -x * np.sin(theta) + y * np.cos(theta)
     return (xr / float(radius_x)) ** 2 + (yr / float(radius_y)) ** 2
 
+def _ellipse_mask(
+    X: np.ndarray, Y: np.ndarray,
+    center_x: float, center_y: float,
+    radius_x: float, radius_y: float,
+    angle_deg: float,
+) -> np.ndarray:
+    """Boolean mask for a rotated ellipse."""
+    return _ellipse_field(X, Y, center_x, center_y, radius_x, radius_y, angle_deg) <= 1.0
 
 def _rotated_envelope(rx: float, ry: float, angle_deg: float) -> Tuple[float, float]:
     """Axis-aligned half-width/height that fully contains a rotated ellipse."""
@@ -98,7 +122,6 @@ def _rotated_envelope(rx: float, ry: float, angle_deg: float) -> Tuple[float, fl
     wx = np.sqrt((rx * c) ** 2 + (ry * s) ** 2)
     wy = np.sqrt((rx * s) ** 2 + (ry * c) ** 2)
     return wx, wy
-
 
 def _binary_erode(mask: np.ndarray) -> np.ndarray:
     """
@@ -296,10 +319,6 @@ def _geom4(sample_res: int = 900, spacing : float = 5.6):
     bottom_radial_offset = 0.64  # *units of max(rx,ry)* away from grand center
     bottom_tangent_offset = 0.2  # +/- along x for left/right bottom labels
     complement_offset = 0.1      # *units of max(rx,ry)* below the lowest ellipse
-    
-    # ---- per-region manual nudges (for tricky shapes) ----
-    a_only_offset = (-0.10, 0.2)  # A-only
-    d_only_offset = (+0.10, 0.2)  # D-only
 
     # Unit vectors
     unit_pos = np.array([np.cos(np.deg2rad(theta)), np.sin(np.deg2rad(theta))], float)
@@ -386,10 +405,8 @@ def _geom4(sample_res: int = 900, spacing : float = 5.6):
 
     # Region-specific nudges
     region_offsets: Dict[Tuple[int, int, int, int], Tuple[float, float]] = {}
-    dx_A, dy_A = a_only_offset
-    dx_D, dy_D = d_only_offset
-    region_offsets[(1, 0, 0, 0)] = (dx_A * size_unit, dy_A * size_unit)  # A-only
-    region_offsets[(0, 0, 0, 1)] = (dx_D * size_unit, dy_D * size_unit)  # D-only
+    region_offsets[(1, 0, 0, 0)] = (-0.10 * size_unit, 0.2 * size_unit)  # A-only
+    region_offsets[(0, 0, 0, 1)] = ( 0.10 * size_unit, 0.2 * size_unit)  # D-only
 
     # Pack label positions with rotations
     label_positions_with_rot = [(xy[0], xy[1], rot) for xy, rot in zip(label_positions, label_rotations)]
@@ -492,8 +509,7 @@ def _geom5(sample_res: int = 900):
             # degenerate; pick rightmost point
             p_local = np.array([rx, 0.0], float)
         else:
-            p_local = np.array([ (rx**2) * d_local[0] / denom,
-                                 (ry**2) * d_local[1] / denom ], float)
+            p_local = np.array([ (rx**2) * d_local[0] / denom, (ry**2) * d_local[1] / denom ], float)
 
         # 4) back to world coords
         p_world = _rot(p_local[0], p_local[1], ang) + c
@@ -531,6 +547,12 @@ def _geom5(sample_res: int = 900):
     # Complement below
     lowest_y = min(cy - ry for (cx, cy) in centers)
     complement_pos = (0.15 * size_unit, lowest_y - (0.4 * size_unit))
+    
+    # Region-specific nudges
+    region_offsets: Dict[Tuple[int, int, int, int, int], Tuple[float, float]] = {}
+    region_offsets[(0, 1, 0, 1, 1)] = ( -0.015 * size_unit, 0.0 * size_unit)  # BDE-only
+    region_offsets[(0, 1, 1, 1, 0)] = ( -0.005 * size_unit, -0.005 * size_unit)  # BCD-only
+    region_offsets[(1, 0, 1, 0, 1)] = ( -0.002 * size_unit, 0.005 * size_unit)  # ACE-only
 
     return {
         "centers": centers,
@@ -541,7 +563,7 @@ def _geom5(sample_res: int = 900):
         "label_positions": label_positions,
         "complement_pos": complement_pos,
         "limits": (xmin, xmax, ymin, ymax),
-        "region_offsets": {},              # no manual nudges by default
+        "region_offsets": region_offsets,
         "size_unit": size_unit
     }
 
@@ -558,6 +580,11 @@ def venn(
     outfile: Optional[str] = None,
     dpi: int = 100,
     rotate_region_labels: Optional[bool] = None,
+    color_mixing: Union[str, Callable[[Sequence[np.ndarray]], np.ndarray]] = "subtractive",
+    text_color: Optional[str] = "black",
+    region_label_fontsize: int = 12,
+    class_name_fontsize: int = 16,
+    title_fontsize: int = 20,
     **kwargs,
 ) -> Optional[Figure]:
     """
@@ -584,6 +611,22 @@ def venn(
         If True, compute a per-region “ideal direction” from detected
         corners (3 -> longest edge; 4 -> longer of lines connecting side midpoints,
         with 1% tie → longest diagonal) and rotate the region label accordingly.
+    color_mixing : {"average", "alpha"} or callable, optional
+        How to mix set colors into the region color. If a string:
+          - "average": simple arithmetic mean of member colors
+          - "alpha": stack colors with a fixed alpha over white background
+        If a callable, it must accept a list of RGB colors (each shape (3,))
+        and return a single mixed RGB color (shape (3,)).
+    text_color : Optional[str]
+        Color for text labels (not the class colors, those are set via `colors`).
+        If None, region labels are automatically set to black or white based on
+        the region's background color.
+    region_label_fontsize: int
+        Font size for region labels.
+    class_name_fontsize: int
+        Font size for class (set) names.
+    title_fontsize: int
+        Font size for the title.
     kwargs : forwarded to the corresponding geometry helper
     """
     # ---- Determine N and build geometry ----
@@ -629,23 +672,51 @@ def venn(
 
     # ---- Colors ----
     if colors is None:
-        cycle = plt.rcParams["axes.prop_cycle"].by_key().get(
-            "color",
-            ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"],
-        )
+        cycle = ['#2ca02c', '#ff7f0e', '#1f77b4', '#9467bd', "#d62728"]
         colors = [cycle[i % len(cycle)] for i in range(N)]
     rgbs = list(map(_rgb, colors))
+
+    # ---- Color mixing callback ----
+    if isinstance(color_mixing, str):
+        if color_mixing == "subtractive":
+            mixing_cb = _color_mix_subtractive
+        elif color_mixing == "average":
+            mixing_cb = _color_mix_average
+        elif color_mixing == "alpha":
+            mixing_cb = _color_mix_alpha_stack
+        else:
+            raise ValueError(f"Unrecognized color_mixing string: {color_mixing!r}")
+    elif callable(color_mixing):
+        mixing_cb = color_mixing
+    else:
+        raise TypeError("color_mixing must be either a string or a callable.")
 
     # ---- Rasterize membership to image (RGBA) ----
     X, Y = geom["X"], geom["Y"]
     membership = [m.astype(float) for m in geom["membership"]]  # list (H,W)
     membership_stack = np.stack(membership, axis=-1)             # (H,W,N)
-    count = membership_stack.sum(axis=-1, keepdims=True)         # (H,W,1)
-    rgb_sum = (membership_stack @ np.stack(rgbs, axis=0))        # (H,W,3)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        rgb_avg = np.where(count > 0, rgb_sum / count, 0.0)
-    alpha = (count[..., 0] > 0).astype(float)
-    rgba = np.dstack([rgb_avg, alpha])
+
+    # Disjoint region masks for both color mixing and label handling
+    masks = _disjoint_region_masks([m.astype(bool) for m in membership])
+
+    H, W, _ = membership_stack.shape
+    rgba = np.zeros((H, W, 4), float)
+    region_rgbs: Dict[Tuple[int, ...], np.ndarray] = {}
+
+    for key, mask in masks.items():
+        if not any(key):
+            continue  # leave complement transparent
+        if not mask.any():
+            continue
+        colors_for_key = [rgbs[i] for i, bit in enumerate(key) if bit]
+        mixed_rgb = np.asarray(mixing_cb(colors_for_key), float)
+        if mixed_rgb.shape != (3,):
+            raise ValueError("color_mixing callback must return an RGB array of shape (3,).")
+        region_rgbs[key] = mixed_rgb
+        rgba[..., 0][mask] = mixed_rgb[0]
+        rgba[..., 1][mask] = mixed_rgb[1]
+        rgba[..., 2][mask] = mixed_rgb[2]
+        rgba[..., 3][mask] = 1.0
 
     # ---- Figure ----
     fig, ax = plt.subplots(figsize=(9.6, 8.6))
@@ -687,7 +758,6 @@ def venn(
     fields = np.stack(fields, axis=-1)  # (H,W,N)
 
     # ---- Region values (per disjoint area) ----
-    masks = _disjoint_region_masks([m.astype(bool) for m in membership])
     size_unit = float(geom["size_unit"])
     region_offsets = geom.get("region_offsets", {})
 
@@ -798,7 +868,6 @@ def venn(
             # Other counts: leave rotation at default (0°)
 
     # ---- Region label drawing (with optional downward shift after rotation) ----
-    region_fontsize = 14  # keep consistent with previous code
     # Convert text height (points) -> pixels -> data units (along vertical)
     def _data_units_for_pixels(ax, px: float) -> float:
         cx = 0.5 * (xmin + xmax)
@@ -808,9 +877,15 @@ def venn(
         p2_data = ax.transData.inverted().transform(p2_disp)
         return abs(p2_data[1] - cy)
 
-    text_height_pts = float(region_fontsize)  # approximate
+    text_height_pts = float(region_label_fontsize)  # approximate
     text_height_px = text_height_pts * fig.dpi / 72.0
-    down_len_data = 0.1 * _data_units_for_pixels(ax, text_height_px)
+    down_len_data = 0.11 * _data_units_for_pixels(ax, text_height_px)
+
+    # Auto text color helper (black/white) based on region RGB
+    def _auto_text_color_from_rgb(rgb: np.ndarray) -> str:
+        # Perceived luminance (Rec. 601)
+        lum = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+        return "white" if lum < 0.5 else "black"
 
     # Draw region texts (with optional rotation + post-rotation downward shift)
     for key, mask in masks.items():
@@ -830,21 +905,30 @@ def venn(
         theta = np.deg2rad(rot_val)
         down_vec = np.array([np.sin(theta), -np.cos(theta)], float) * down_len_data
 
+        if text_color is None:
+            rgb = region_rgbs.get(key)
+            if rgb is not None:
+                this_color = _auto_text_color_from_rgb(rgb)
+            else:
+                this_color = "black"
+        else:
+            this_color = text_color
+
         ax.text(
             pos[0] + dx + down_vec[0], pos[1] + dy + down_vec[1], f"{value}",
-            ha="center", va="center", fontsize=region_fontsize, zorder=8,
-            rotation=rot_val, rotation_mode="anchor"
+            ha="center", va="center", fontsize=region_label_fontsize, zorder=8,
+            rotation=rot_val, rotation_mode="anchor", color=this_color
         )
 
     # ---- Complement (all-zeros) ----
     zeros = (0,) * N
     if arr[zeros] is not None:
         cx, cy = geom["complement_pos"]
-        ax.text(cx, cy, f"{arr[zeros]}", ha="center", va="center", fontsize=14)
+        ax.text(cx, cy, f"{arr[zeros]}", ha="center", va="center", fontsize=region_label_fontsize)
 
     # ---- Class labels ----
     for (x, y, rot), name, col in zip(geom["label_positions"], class_names, rgbs):
-        ax.text(x, y, name, ha="center", va="center", fontsize=16,
+        ax.text(x, y, name, ha="center", va="center", fontsize=class_name_fontsize,
                 color=tuple(col), rotation=rot, rotation_mode="anchor")
 
     # ---- Expand limits to include labels & complement ----
@@ -865,7 +949,7 @@ def venn(
 
     # ---- Title / export ----
     if title:
-        ax.set_title(title, fontsize=20)
+        ax.set_title(title, fontsize=title_fontsize)
 
     if outfile:
         fig.savefig(outfile, dpi=dpi, bbox_inches="tight")
@@ -873,4 +957,3 @@ def venn(
         return None
 
     return fig
-
