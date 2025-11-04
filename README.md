@@ -2,11 +2,9 @@
 [![pypi](https://img.shields.io/pypi/v/yamvp.svg)](https://pypi.org/project/yamvp/)
 # YAMVP - Yet Another Matplotlib Venn-diagram Plotter
 ## Overview
-This module provides a function to create Matplotlib figures containing ellipse-based Venn-diagrams with up to 5 classes.
-
-The main goal was to provide a simple interface and good looks.
-
-For example, color mixing of the class intersections does not simply rely on alpha stacking.  
+This module provides a function for creating Matplotlib figures with ellipse-based Venn-diagrams for up to five classes.
+Its primary aim is a simple interface and visually appealing results.
+For example, colors in the class intersections are combined using more sophisticated mixing than simple alpha stacking.
 
 ## Installation
 ```
