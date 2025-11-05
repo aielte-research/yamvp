@@ -69,15 +69,15 @@ if __name__ == "__main__":
     
     # 2-set Area Proportional
     rand2 = np.random.randint(0, 1000, size=(2, 2))
-    fig = venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "img/rand2_demo.png")
+    venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "img/rand2_demo.png")
     
     rand2 = np.random.randint(0, 1000, size=(2, 2))
     rand2[1,1] = 0
-    fig = venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "img/rand2_demo2.png")
+    venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "img/rand2_demo2.png")
     
     rand2 = np.random.randint(0, 1000, size=(2, 2))
     rand2[1,0] = 0
-    fig = venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "img/rand2_demo3.png")
+    venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "img/rand2_demo3.png")
     
     rand2[0,1] = 0
-    fig = venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "img/rand2_demo4.png")
+    venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "img/rand2_demo4.png")
