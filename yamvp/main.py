@@ -16,6 +16,7 @@ PNGs and PDFs for 1,2,3,4,5-set cases in /mnt/data.
 
 from typing import Optional, Sequence, Union, Tuple, List, Dict, Callable
 import itertools
+import numbers
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
@@ -168,6 +169,63 @@ def _cluster_points(points: np.ndarray, radius: float) -> List[np.ndarray]:
     return centers
 
 
+def _circle_intersection_area(r1: float, r2: float, d: float) -> float:
+    """
+    Area of intersection of two circles of radii r1, r2 separated by distance d.
+    """
+    r1 = float(r1)
+    r2 = float(r2)
+    d = float(d)
+    if d >= r1 + r2:
+        return 0.0
+    if d <= abs(r1 - r2):
+        return float(np.pi * min(r1, r2) ** 2)
+
+    x = (d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1)
+    y = (d * d + r2 * r2 - r1 * r1) / (2.0 * d * r2)
+    x = float(np.clip(x, -1.0, 1.0))
+    y = float(np.clip(y, -1.0, 1.0))
+    alpha = float(np.arccos(x))
+    beta = float(np.arccos(y))
+    term = (-d + r1 + r2) * (d + r1 - r2) * (d - r1 + r2) * (d + r1 + r2)
+    term = max(0.0, term)
+    inter = r1 * r1 * alpha + r2 * r2 * beta - 0.5 * float(np.sqrt(term))
+    return float(inter)
+
+
+def _solve_circle_distance_for_area(r1: float, r2: float, target_area: float,
+                                    tol: float = 1e-6, max_iter: int = 100) -> float:
+    """
+    Given radii r1, r2 and desired intersection area (0 < target_area < area_small),
+    find distance d between centers such that the intersection area matches target_area.
+    """
+    r1 = float(r1)
+    r2 = float(r2)
+    target_area = float(target_area)
+
+    if target_area <= 0.0:
+        return r1 + r2
+
+    area_small = float(np.pi * min(r1, r2) ** 2)
+    if target_area >= area_small:
+        return 0.0
+
+    lo = abs(r1 - r2)
+    hi = r1 + r2
+
+    for _ in range(max_iter):
+        mid = 0.5 * (lo + hi)
+        val = _circle_intersection_area(r1, r2, mid)
+        if abs(val - target_area) <= tol * area_small:
+            return mid
+        if val > target_area:
+            lo = mid
+        else:
+            hi = mid
+
+    return 0.5 * (lo + hi)
+
+
 # ============================================================================
 # Geometry helpers (preserve the original layouts)
 # ============================================================================
@@ -206,36 +264,244 @@ def _geom1(
     }
 
 
-def _geom2(sample_res: int = 600, spacing_ratio: float = 1.0):
-    """Two-circle geometry with ratio of AB/A = `ratio`"""
-    r = 2.0
-    pad = 0.1
-    d = 2*r/(spacing_ratio+1)
-    cxL, cxR, cy = - d/2.0, d/2.0, 0.0
+def _geom2(
+    sample_res: int = 600,
+    spacing_ratio: Optional[float] = None,
+    radius: Optional[float] = None,
+    d_factor: Optional[float] = None,
+    area_proportional: bool = False,
+    values: Optional[np.ndarray] = None,
+):
+    """
+    Two-circle geometry.
 
-    # Bounds & grid
-    xmin, xmax = min(cxL, cxR) - r - pad, max(cxL, cxR) + r + pad
-    ymin, ymax = cy - r - pad, cy + r + pad
+    - Default: symmetric circles with spacing controlled by `spacing_ratio` (or
+      `d_factor` as a backward-compatible alias).
+    - If `area_proportional` is True and `values` is a 2x2 table of non-negative
+      numbers (or None), then the circle areas and their intersection are made
+      proportional to the region values for N=2.
+    """
+    # Base radius and spacing
+    r0 = 2.0 if radius is None else float(radius)
+
+    if spacing_ratio is None:
+        if d_factor is not None:
+            spacing_ratio_val = float(d_factor)
+        else:
+            spacing_ratio_val = 1.0
+    else:
+        spacing_ratio_val = float(spacing_ratio)
+
+    pad = 0.1
+
+    # Defaults: symmetric radii and spacing
+    radA = r0
+    radB = r0
+    d = 2.0 * r0 / (spacing_ratio_val + 1.0)
+    cxL, cxR, cy = -d / 2.0, d / 2.0, 0.0
+
+    # Flags for whether area-proportional geometry was actually used
+    area_logic_ok = False
+    edge_case = False
+
+    # Optional area-proportional scaling for N=2
+    if area_proportional and values is not None:
+        arr = np.asarray(values, dtype=object)
+        if arr.shape == (2, 2):
+            flat = arr.ravel()
+
+            # 1) All inputs numbers or None
+            types_ok = True
+            for v in flat:
+                if v is None:
+                    continue
+                if not isinstance(v, numbers.Real):
+                    types_ok = False
+                    break
+
+            # 2) No negatives
+            if types_ok:
+                for v in flat:
+                    if v is None:
+                        continue
+                    if float(v) < 0.0:
+                        types_ok = False
+                        break
+
+            if types_ok:
+                v00 = arr[0, 0]
+                v01 = arr[0, 1]  # B-only
+                v10 = arr[1, 0]  # A-only
+                v11 = arr[1, 1]  # intersection
+                regs = [v01, v10, v11]
+
+                # Require explicit numeric values for non-complement regions
+                if any(v is None for v in regs):
+                    types_ok = False
+
+            if types_ok:
+                # More than one zero (excluding complement) -> bail out to original geometry
+                zero_count = sum(
+                    1 for v in regs
+                    if v is not None and float(v) == 0.0
+                )
+                if zero_count > 1:
+                    types_ok = False
+
+            if types_ok:
+                a_only = float(v10)
+                b_only = float(v01)
+                both = float(v11)
+
+                A_total = a_only + both
+                B_total = b_only + both
+
+                if A_total > 0.0 and B_total > 0.0:
+                    area_logic_ok = True
+
+                    # Scale radii so their areas reflect totals up to a global factor
+                    if A_total >= B_total:
+                        radA = r0
+                        radB = r0 * np.sqrt(B_total / A_total)
+                        total_big = A_total
+                    else:
+                        radB = r0
+                        radA = r0 * np.sqrt(A_total / B_total)
+                        total_big = B_total
+
+                    # Global proportionality constant so that big set area ~ total_big
+                    k = float(np.pi * (r0 ** 2)) / float(total_big)
+                    target_intersection_area = k * both
+
+                    # Edge cases for distance
+                    if both <= 0.0:
+                        # No intersection -> circles just touch externally
+                        d = radA + radB
+                        edge_case = True
+                    elif a_only == 0.0 or b_only == 0.0:
+                        # A-B == 0 or B-A == 0: internal tangency
+                        # d + r_small = r_big  => d = |r_big - r_small|
+                        d = abs(radA - radB)
+                        edge_case = True
+                    else:
+                        # General case: match intersection area
+                        d = _solve_circle_distance_for_area(radA, radB, target_intersection_area)
+                # else: leave area_logic_ok False -> fall back to default geometry
+
+    # If area-proportional geometry is active, shift centers using the asymmetric formula
+    if area_logic_ok:
+        cxL = -(d - radA + radB) / 2.0
+        cxR =  (d + radA - radB) / 2.0
+        # cy stays 0
+
+    # Whether to use special outside label geometry
+    use_special_labels = area_proportional and area_logic_ok and not edge_case
+
+    # Bounds & grid (use max radius)
+    r_max = max(radA, radB)
+    xmin, xmax = min(cxL, cxR) - r_max - pad, max(cxL, cxR) + r_max + pad
+    ymin, ymax = cy - r_max - pad, cy + r_max + pad
     nx = int(sample_res); ny = int(sample_res)
     xs = np.linspace(xmin, xmax, nx); ys = np.linspace(ymin, ymax, ny)
     X, Y = np.meshgrid(xs, ys)
 
-    in_A = _ellipse_mask(X, Y, cxL, cy, r, r, 0.0)
-    in_B = _ellipse_mask(X, Y, cxR, cy, r, r, 0.0)
+    in_A = _ellipse_mask(X, Y, cxL, cy, radA, radA, 0.0)
+    in_B = _ellipse_mask(X, Y, cxR, cy, radB, radB, 0.0)
 
-    label_pos = [
-        (cxL, cy + 1.22 * r, 0.0),
-        (cxR, cy + 1.22 * r, 0.0),
-    ]
-    complement_pos = (0.0, cy - 1.35 * r)
+    size_unit = r_max
+
+    # ---- Helper: top circle–circle intersection if it exists ----
+    def _top_intersection_point(cx1: float, r1: float, cx2: float, r2: float, cy_: float) -> Optional[Tuple[float, float]]:
+        d_centers = abs(cx2 - cx1)
+        if d_centers <= 1e-9:
+            # Coincident centers -> degenerate
+            return None
+        if d_centers > r1 + r2:
+            # Disjoint
+            return None
+        if d_centers < abs(r1 - r2) - 1e-9:
+            # Strict containment without tangency
+            return None
+
+        a = (r1 * r1 - r2 * r2 + d_centers * d_centers) / (2.0 * d_centers)
+        h_sq = r1 * r1 - a * a
+        if h_sq < 0.0:
+            h_sq = 0.0
+        h = float(np.sqrt(h_sq))
+        x = cx1 + a * np.sign(cx2 - cx1)
+        y = cy_ + h
+        return (x, y)
+
+    inter = _top_intersection_point(cxL, radA, cxR, radB, cy)
+
+    # ---- Class label positions ----
+    if use_special_labels and inter is not None and radA > 0.0 and radB > 0.0:
+        ix, iy = inter
+        offset = 0.18 * size_unit
+
+        # Left circle: OUTSIDE direction (towards left)
+        u0L = np.array([-1.0, 0.0], float)
+        v1L = np.array([ix - cxL, iy - cy], float)
+        n1L = np.linalg.norm(v1L)
+        if n1L > 1e-12:
+            u1L = v1L / n1L
+        else:
+            u1L = u0L
+        u_mid_L = u0L + u1L
+        n_mid_L = np.linalg.norm(u_mid_L)
+        if n_mid_L < 1e-12:
+            u_mid_L = u0L
+        else:
+            u_mid_L = u_mid_L / n_mid_L
+
+        bxL = cxL + radA * u_mid_L[0]
+        byL = cy + radA * u_mid_L[1]
+        lxL = bxL + offset * u_mid_L[0]
+        lyL = byL + offset * u_mid_L[1]
+        tL = np.array([-u_mid_L[1], u_mid_L[0]], float)
+        rotL = _normalize_angle_90(float(np.degrees(np.arctan2(tL[1], tL[0]))))
+
+        # Right circle: OUTSIDE direction (towards right)
+        u0R = np.array([1.0, 0.0], float)
+        v1R = np.array([ix - cxR, iy - cy], float)
+        n1R = np.linalg.norm(v1R)
+        if n1R > 1e-12:
+            u1R = v1R / n1R
+        else:
+            u1R = u0R
+        u_mid_R = u0R + u1R
+        n_mid_R = np.linalg.norm(u_mid_R)
+        if n_mid_R < 1e-12:
+            u_mid_R = u0R
+        else:
+            u_mid_R = u_mid_R / n_mid_R
+
+        bxR = cxR + radB * u_mid_R[0]
+        byR = cy + radB * u_mid_R[1]
+        lxR = bxR + offset * u_mid_R[0]
+        lyR = byR + offset * u_mid_R[1]
+        tR = np.array([-u_mid_R[1], u_mid_R[0]], float)
+        rotR = _normalize_angle_90(float(np.degrees(np.arctan2(tR[1], tR[0]))))
+
+        label_pos = [
+            (lxL, lyL, rotL),
+            (lxR, lyR, rotR),
+        ]
+    else:
+        # Original simple label positions: above each circle, no rotation
+        label_pos = [
+            (cxL, cy + 1.22 * radA, 0.0),
+            (cxR, cy + 1.22 * radB, 0.0),
+        ]
+
+    complement_pos = (0.0, cy - 1.35 * r_max)
     
-    region_offsets = {}
-    region_offsets[(1, 0)] = (-(2*r-d)/6, 0.0) # A-only
-    region_offsets[(0, 1)] = ((2*r-d)/6, 0.0) # B-only
+    # No region_offsets hack for N=2; region labels handled specially in `venn`.
+    region_offsets: Dict[Tuple[int, int], Tuple[float, float]] = {}
 
     return {
         "centers": [(cxL, cy), (cxR, cy)],
-        "radii":   [(r, r), (r, r)],
+        "radii":   [(radA, radA), (radB, radB)],
         "angles":  [0.0, 0.0],
         "X": X, "Y": Y,
         "membership": [in_A, in_B],
@@ -244,7 +510,7 @@ def _geom2(sample_res: int = 600, spacing_ratio: float = 1.0):
         "complement_pos": complement_pos,
         "limits": (xmin, xmax, ymin, ymax),
         "region_offsets": region_offsets,
-        "size_unit": r,
+        "size_unit": size_unit,
     }
 
 
@@ -585,6 +851,7 @@ def venn(
     region_label_fontsize: int = 12,
     class_name_fontsize: int = 16,
     title_fontsize: int = 20,
+    area_proportional: bool = False,
     **kwargs,
 ) -> Optional[Figure]:
     """
@@ -611,6 +878,7 @@ def venn(
         If True, compute a per-region “ideal direction” from detected
         corners (3 -> longest edge; 4 -> longer of lines connecting side midpoints,
         with 1% tie → longest diagonal) and rotate the region label accordingly.
+        (Ignored for N=2, where region labels sit on y=0 as described below.)
     color_mixing : {"average", "alpha"} or callable, optional
         How to mix set colors into the region color. If a string:
           - "average": simple arithmetic mean of member colors
@@ -627,6 +895,12 @@ def venn(
         Font size for class (set) names.
     title_fontsize: int
         Font size for the title.
+    area_proportional : bool
+        If True and N==2 with suitable numeric inputs, scale the two circles so
+        that their areas (and the intersection area, via center distance) are
+        proportional to the provided region values. If the inputs are not all
+        numbers/None, contain negatives, or more than one non-complement region
+        is 0, this flag is ignored and the original geometry is used.
     kwargs : forwarded to the corresponding geometry helper
     """
     # ---- Determine N and build geometry ----
@@ -642,7 +916,8 @@ def venn(
         N = 2
         if arr.shape != (2, 2):
             raise ValueError("For N=2, values must be 2x2.")
-        geom = _geom2(**{k: v for k, v in kwargs.items() if k in {"radius", "d_factor", "sample_res"}})
+        geom_kwargs = {k: v for k, v in kwargs.items() if k in {"radius", "d_factor", "sample_res", "spacing_ratio"}}
+        geom = _geom2(area_proportional=area_proportional, values=arr, **geom_kwargs)
 
     elif arr.ndim == 3:
         N = 3
@@ -797,8 +1072,8 @@ def venn(
 
             # Only act on triangles / quads
             if len(corners) == 3:
-                # --- FIX: if all three sides within 1%, pick the one nearest 0°;
-                #          else if two sides within 1%, select the third side; otherwise longest. ---
+                # --- if all three sides within 1%, pick the one nearest 0°;
+                #     else if two sides within 1%, select the third side; otherwise longest. ---
                 C = np.array(corners)
                 e01 = C[1] - C[0]; l01 = np.linalg.norm(e01)
                 e12 = C[2] - C[1]; l12 = np.linalg.norm(e12)
@@ -887,23 +1162,45 @@ def venn(
         lum = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
         return "white" if lum < 0.5 else "black"
 
-    # Draw region texts (with optional rotation + post-rotation downward shift)
+    # Draw region texts
     for key, mask in masks.items():
         if not any(key):
             continue  # skip all-zeros region here (handled as complement below)
         value = arr[key]
         if value is None:
             continue
-        pos = _centroid(mask, X, Y)
-        if pos is None:
-            continue
-        dx, dy = region_offsets.get(tuple(map(int, key)), (0.0, 0.0))
-        rot_val = float(region_rotations.get(key, 0.0))
 
-        # Compute “down” direction in world coords for given rotation:
-        # baseline unit b = [cosθ, sinθ]; upward normal u = [-sinθ, cosθ]; downward = -u
-        theta = np.deg2rad(rot_val)
-        down_vec = np.array([np.sin(theta), -np.cos(theta)], float) * down_len_data
+        if N == 2:
+            # N=2 special logic: region labels at the center of the line segment
+            # that the shape cuts out from y=0.
+            if Y.shape[0] > 1:
+                dy_step = float(abs(Y[1, 0] - Y[0, 0]))
+                eps_y = 0.75 * dy_step
+            else:
+                eps_y = 1e-9
+            mask_line = mask & (np.abs(Y) <= eps_y)
+            if mask_line.any():
+                xs_line = X[mask_line]
+                x_mid = 0.5 * (float(xs_line.min()) + float(xs_line.max()))
+                pos = (x_mid, 0.0)
+            else:
+                # Fallback to centroid if region does not intersect y=0
+                pos = _centroid(mask, X, Y)
+                if pos is None:
+                    continue
+            dx = dy = 0.0
+            rot_val = 0.0
+            down_vec = np.array([0.0, 0.0], float)
+        else:
+            pos = _centroid(mask, X, Y)
+            if pos is None:
+                continue
+            dx, dy = region_offsets.get(tuple(map(int, key)), (0.0, 0.0))
+            rot_val = float(region_rotations.get(key, 0.0))
+
+            # Compute “down” direction in world coords for given rotation:
+            theta = np.deg2rad(rot_val)
+            down_vec = np.array([np.sin(theta), -np.cos(theta)], float) * down_len_data
 
         if text_color is None:
             rgb = region_rgbs.get(key)
