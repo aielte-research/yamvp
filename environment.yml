@@ -6,4 +6,5 @@ dependencies:
   - twine
   - wheel
   - numpy
+  - scipy
   - matplotlib

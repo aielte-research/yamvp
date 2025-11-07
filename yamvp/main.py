@@ -22,7 +22,8 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.patches import Ellipse
 from matplotlib.colors import to_rgb
-
+from scipy.ndimage import distance_transform_edt, binary_erosion
+from scipy.cluster.hierarchy import fclusterdata
 
 # ============================================================================
 # Utility helpers (standalone; no external module dependency)
@@ -50,6 +51,15 @@ def _centroid(mask: np.ndarray, X: np.ndarray, Y: np.ndarray) -> Optional[Tuple[
     yy, xx = np.where(mask)
     return (X[yy, xx].mean(), Y[yy, xx].mean())
 
+def _visual_center(mask: np.ndarray, X: np.ndarray, Y: np.ndarray):
+    """
+    Visual center via Euclidean distance transform (SciPy).
+    """
+    if not mask.any():
+        return None
+    dist = distance_transform_edt(mask)
+    yy, xx = np.unravel_index(np.argmax(dist), dist.shape)
+    return float(X[yy, xx]), float(Y[yy, xx])
 
 def _rgb(color: Union[str, tuple]) -> np.ndarray:
     """Convert any Matplotlib color into an RGB float array in [0,1]."""
@@ -124,20 +134,6 @@ def _rotated_envelope(rx: float, ry: float, angle_deg: float) -> Tuple[float, fl
     wy = np.sqrt((rx * s) ** 2 + (ry * c) ** 2)
     return wx, wy
 
-def _binary_erode(mask: np.ndarray) -> np.ndarray:
-    """
-    Fast 3x3 binary erosion without external deps.
-    Erosion keeps a pixel only if all 8 neighbors (and itself) are True.
-    """
-    h, w = mask.shape
-    pad = np.pad(mask, 1, mode='constant', constant_values=False)
-    eroded = np.ones_like(mask, dtype=bool)
-    for dy in (0, 1, 2):
-        for dx in (0, 1, 2):
-            eroded &= pad[dy:dy + h, dx:dx + w]
-    return eroded
-
-
 def _normalize_angle_90(deg: float) -> float:
     """Map any angle (deg) to the equivalent angle in [-90, +90]."""
     a = float(deg)
@@ -147,27 +143,15 @@ def _normalize_angle_90(deg: float) -> float:
         a += 180.0
     return a
 
-
 def _cluster_points(points: np.ndarray, radius: float) -> List[np.ndarray]:
     """
-    Simple agglomerative clustering with a fixed radius.
-    Returns list of cluster centers (means).
+    Cluster points with a fixed radius using SciPy, return cluster centers.
     """
     if len(points) == 0:
         return []
-    pts = points.copy()
-    centers: List[np.ndarray] = []
-    used = np.zeros(len(pts), dtype=bool)
-    for i in range(len(pts)):
-        if used[i]:
-            continue
-        ref = pts[i]
-        d = np.linalg.norm(pts - ref, axis=1)
-        group_idx = (d <= radius)
-        used |= group_idx
-        centers.append(pts[group_idx].mean(axis=0))
+    labels = fclusterdata(points, t=radius, criterion="distance")
+    centers = [points[labels == lab].mean(axis=0) for lab in np.unique(labels)]
     return centers
-
 
 def _circle_intersection_area(r1: float, r2: float, d: float) -> float:
     """
@@ -191,7 +175,6 @@ def _circle_intersection_area(r1: float, r2: float, d: float) -> float:
     term = max(0.0, term)
     inter = r1 * r1 * alpha + r2 * r2 * beta - 0.5 * float(np.sqrt(term))
     return float(inter)
-
 
 def _solve_circle_distance_for_area(r1: float, r2: float, target_area: float,
                                     tol: float = 1e-6, max_iter: int = 100) -> float:
@@ -224,7 +207,6 @@ def _solve_circle_distance_for_area(r1: float, r2: float, target_area: float,
             hi = mid
 
     return 0.5 * (lo + hi)
-
 
 # ============================================================================
 # Geometry helpers (preserve the original layouts)
@@ -263,7 +245,6 @@ def _geom1(
         "size_unit": r,
     }
 
-
 def _geom2(
     sample_res: int = 600,
     spacing_ratio: Optional[float] = None,
@@ -282,7 +263,7 @@ def _geom2(
       proportional to the region values for N=2.
     """
     # Base radius and spacing
-    r0 = 2.0 if radius is None else float(radius)
+    r0 = 1.5 if radius is None else float(radius)
 
     if spacing_ratio is None:
         if d_factor is not None:
@@ -437,7 +418,7 @@ def _geom2(
     # ---- Class label positions ----
     if use_special_labels and inter is not None and radA > 0.0 and radB > 0.0:
         ix, iy = inter
-        offset = 0.18 * size_unit
+        offset = 0.12 * size_unit
 
         # Left circle: OUTSIDE direction (towards left)
         u0L = np.array([-1.0, 0.0], float)
@@ -490,8 +471,8 @@ def _geom2(
     else:
         # Original simple label positions: above each circle, no rotation
         label_pos = [
-            (cxL, cy + 1.22 * radA, 0.0),
-            (cxR, cy + 1.22 * radB, 0.0),
+            (cxL, cy + radA + (radA + radB)*0.08, 0.0),
+            (cxR, cy + radB + (radA + radB)*0.08, 0.0),
         ]
 
     complement_pos = (0.0, cy - 1.35 * r_max)
@@ -512,7 +493,6 @@ def _geom2(
         "region_offsets": region_offsets,
         "size_unit": size_unit,
     }
-
 
 def _geom3(sample_res: int = 800, spacing: float = 1.12):
     """Three circles at the vertices of an equilateral triangle (centroid at origin)."""
@@ -556,6 +536,10 @@ def _geom3(sample_res: int = 800, spacing: float = 1.12):
     ]
     complement_pos = (0.0, ymin - 0.05 * r)
 
+    # For N=3, all disjoint regions use visual centers.
+    region_label_method_default = "visual_center"
+    region_label_method_overrides: Dict[Tuple[int, int, int], str] = {}
+
     return {
         "centers": [(cxA, cyA), (cxB, cyB), (cxC, cyC)],
         "radii":   [(r, r)] * 3,
@@ -567,6 +551,8 @@ def _geom3(sample_res: int = 800, spacing: float = 1.12):
         "limits": (xmin, xmax, ymin, ymax),
         "region_offsets": {},
         "size_unit": r,
+        "region_label_method_default": region_label_method_default,
+        "region_label_method_overrides": region_label_method_overrides,
     }
 
 def _geom4(sample_res: int = 900, spacing : float = 5.6):
@@ -669,10 +655,15 @@ def _geom4(sample_res: int = 900, spacing : float = 5.6):
     lowest_y = min(cA[1] - ry, cB[1] - ry, cC[1] - ry, cD[1] - ry)
     complement_pos = (diag_center[0], lowest_y - (float(complement_offset) * size_unit))
 
-    # Region-specific nudges
-    region_offsets: Dict[Tuple[int, int, int, int], Tuple[float, float]] = {}
-    region_offsets[(1, 0, 0, 0)] = (-0.10 * size_unit, 0.2 * size_unit)  # A-only
-    region_offsets[(0, 0, 0, 1)] = ( 0.10 * size_unit, 0.2 * size_unit)  # D-only
+    # Region-specific label method:
+    region_label_method_default = "centroid"
+    region_label_method_overrides: Dict[Tuple[int, int, int, int], str] = {
+        (1, 0, 0, 0): "visual_center",  # A
+        (0, 1, 0, 0): "visual_center",  # B
+        (0, 0, 1, 0): "visual_center",  # C
+        (0, 0, 0, 1): "visual_center",  # D
+        (1, 0, 0, 1): "visual_center",  # AD
+    }
 
     # Pack label positions with rotations
     label_positions_with_rot = [(xy[0], xy[1], rot) for xy, rot in zip(label_positions, label_rotations)]
@@ -686,10 +677,11 @@ def _geom4(sample_res: int = 900, spacing : float = 5.6):
         "label_positions": label_positions_with_rot,
         "complement_pos": complement_pos,
         "limits": (xmin, xmax, ymin, ymax),
-        "region_offsets": region_offsets,
+        "region_offsets": {},
         "size_unit": size_unit,
+        "region_label_method_default": region_label_method_default,
+        "region_label_method_overrides": region_label_method_overrides,
     }
-
 
 def _geom5(sample_res: int = 900):
     """
@@ -819,6 +811,9 @@ def _geom5(sample_res: int = 900):
     region_offsets[(0, 1, 0, 1, 1)] = ( -0.015 * size_unit, 0.0 * size_unit)  # BDE-only
     region_offsets[(0, 1, 1, 1, 0)] = ( -0.005 * size_unit, -0.005 * size_unit)  # BCD-only
     region_offsets[(1, 0, 1, 0, 1)] = ( -0.002 * size_unit, 0.005 * size_unit)  # ACE-only
+    
+    region_label_method_default = "centroid"
+    region_label_method_overrides: Dict[Tuple[int, int, int, int, int], str] = {}
 
     return {
         "centers": centers,
@@ -830,9 +825,10 @@ def _geom5(sample_res: int = 900):
         "complement_pos": complement_pos,
         "limits": (xmin, xmax, ymin, ymax),
         "region_offsets": region_offsets,
-        "size_unit": size_unit
+        "size_unit": size_unit,
+        "region_label_method_default": region_label_method_default,
+        "region_label_method_overrides": region_label_method_overrides,
     }
-
 
 # ============================================================================
 # Generic renderer
@@ -1035,6 +1031,8 @@ def venn(
     # ---- Region values (per disjoint area) ----
     size_unit = float(geom["size_unit"])
     region_offsets = geom.get("region_offsets", {})
+    region_label_method_default = geom.get("region_label_method_default", None)
+    region_label_method_overrides = geom.get("region_label_method_overrides", {})
 
     # Compute ideal rotations per region (if enabled)
     region_rotations: Dict[Tuple[int, ...], float] = {}
@@ -1050,7 +1048,7 @@ def venn(
                 continue
 
             # Region boundary
-            eroded = _binary_erode(mask)
+            eroded = binary_erosion(mask, structure=np.ones((3, 3), bool), border_value=0)
             boundary = mask & (~eroded)
             by, bx = np.where(boundary)
             if by.size < 6:
@@ -1166,6 +1164,8 @@ def venn(
     for key, mask in masks.items():
         if not any(key):
             continue  # skip all-zeros region here (handled as complement below)
+        if not mask.any():
+            continue
         value = arr[key]
         if value is None:
             continue
@@ -1191,8 +1191,21 @@ def venn(
             dx = dy = 0.0
             rot_val = 0.0
             down_vec = np.array([0.0, 0.0], float)
-        else:
+        elif N == 1:
             pos = _centroid(mask, X, Y)
+            if pos is None:
+                continue
+            dx = dy = 0.0
+            rot_val = float(region_rotations.get(key, 0.0))
+            theta = np.deg2rad(rot_val)
+            down_vec = np.array([np.sin(theta), -np.cos(theta)], float) * down_len_data
+        else:
+            # N >= 3: choose between centroid and visual_center
+            method = region_label_method_overrides.get(key, region_label_method_default or "centroid")
+            if method == "visual_center":
+                pos = _visual_center(mask, X, Y)
+            else:
+                pos = _centroid(mask, X, Y)
             if pos is None:
                 continue
             dx, dy = region_offsets.get(tuple(map(int, key)), (0.0, 0.0))

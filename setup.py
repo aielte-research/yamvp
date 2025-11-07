@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name="yamvp",
-    version="0.2",
+    version="0.4",
     author="Bálint Csanády",
     python_requires='>3.6',
     author_email="csbalint@protonmail.ch",
@@ -15,7 +15,7 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/aielte-research/yamvp.git",
     keywords=
-    "Venn, Venn diagram, Matplotlib, 4 sets, 5 sets, visualization, plotting",
+    "Venn, Venn diagram, Matplotlib, 4 sets, 5 sets, visualization, plotting, area-proportional",
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
@@ -23,5 +23,5 @@ setup(
         "Operating System :: OS Independent",
         "Topic :: Scientific/Engineering :: Mathematics",
     ],
-    install_requires=["numpy", "matplotlib"],
+    install_requires=["numpy", "scipy", "matplotlib"],
 )
