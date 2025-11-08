@@ -1037,8 +1037,8 @@ def venn(
         geom_kwargs = {k: v for k, v in kwargs.items() if k in {"radius", "pair_sep_factor", "sample_res", "spacing"}}
         geom = _geom3(area_proportional=area_proportional, values=arr, **geom_kwargs)
         
-        region_label_fontsize = 12 if region_label_fontsize is None else region_label_fontsize
-        class_name_fontsize = 16 if class_name_fontsize is None else class_name_fontsize
+        region_label_fontsize = 14 if region_label_fontsize is None else region_label_fontsize
+        class_name_fontsize = 18 if class_name_fontsize is None else class_name_fontsize
         title_fontsize = 20 if title_fontsize is None else title_fontsize
         if rotate_region_labels is None:
             rotate_region_labels = False

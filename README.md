@@ -131,5 +131,9 @@ venn(rand3, ["Alpha", "Beta", "Gamma"], area_proportional=True, outfile = "rand3
 ```
 ![rand3_demo](https://github.com/aielte-research/yamvp/blob/master/img/rand3_demo.png?raw=true "rand3_demo")
 
+The optimizer is based on a monte-carlo greedy hill climing algorithm, it tries to find a solution with sufficient loss, and selects the best result on using a quality score. 
+
+![rand3_demo](https://github.com/aielte-research/yamvp/blob/master/img/rand3_demo.gif?raw=true "rand3_demo")
+
 ## License
 This project is licensed under the MIT License (c) 2025 Bálint Csanády, aielte-research. See the LICENSE file for details.
