@@ -81,3 +81,24 @@ if __name__ == "__main__":
     
     rand2[0,1] = 0
     venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "img/rand2_demo4.png")
+    
+    # 3-set Area Proportional
+    rand3 = np.array(np.random.randint(0, 1000, size=(2, 2, 2)), dtype=object)
+    rand3[0,0,0] = None
+    venn(rand3, ["Alpha", "Beta", "Gamma"], area_proportional=True, outfile = "img/rand3_demo.png")
+    
+    rand3 = np.array(np.random.randint(0, 1000, size=(2, 2, 2)), dtype=object)
+    rand3[0,0,0] = None
+    rand3[0,0,1] = 0
+    venn(rand3, ["Alpha", "Beta", "Gamma"], area_proportional=True, outfile = "img/rand3_demo2.png")
+    
+    rand3 = np.array(np.random.randint(0, 1000, size=(2, 2, 2)), dtype=object)
+    rand3[0,0,0] = None
+    rand3[0,1,1] = 0
+    venn(rand3, ["Alpha", "Beta", "Gamma"], area_proportional=True, outfile = "img/rand3_demo3.png")
+    
+    rand3 = np.array(np.random.randint(0, 1000, size=(2, 2, 2)), dtype=object)
+    rand3[0,0,0] = None
+    rand3[1,1,1] = 0
+    venn(rand3, ["Alpha", "Beta", "Gamma"], area_proportional=True, outfile = "img/rand3_demo4.png")
+    

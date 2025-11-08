@@ -113,14 +113,23 @@ venn(vals3, ["Alpha", "Beta", "Gamma"], colors=["red", "green", "blue"], outfile
 ![venn3_demo_colors](https://github.com/aielte-research/yamvp/blob/master/img/venn3_demo_colors.png?raw=true "venn3_demo_colors")
 
 ## Area-Proportional Option
+The `area_proportional` flag is ignored if $n > 3$ or if the input data does not contain positive numbers.
+### $n=2$
 For $n = 2$, it is possible to draw the diagram with areas proportional to the given data. 
-The `area_proportional` flag is ignored if $n > 2$ or if the input data does not contain positive numbers.
 ```python
 rand2 = np.random.randint(0, 1000, size=(2, 2))
-venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "img/rand2_demo.png")
+venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "rand2_demo.png")
 ```
-
 ![rand2_demo](https://github.com/aielte-research/yamvp/blob/master/img/rand2_demo.png?raw=true "rand2_demo")
+### $n=3$
+For $n = 3$, it is generally NOT possible to draw the diagram area-proportionally using circles only.
+However we can try morphing the circles into ellipses.
+```python
+rand3 = np.array(np.random.randint(0, 1000, size=(2, 2, 2)), dtype=object)
+rand3[0,0,0] = None
+venn(rand3, ["Alpha", "Beta", "Gamma"], area_proportional=True, outfile = "rand3_demo.png")
+```
+![rand3_demo](https://github.com/aielte-research/yamvp/blob/master/img/rand3_demo.png?raw=true "rand3_demo")
 
 ## License
 This project is licensed under the MIT License (c) 2025 Bálint Csanády, aielte-research. See the LICENSE file for details.

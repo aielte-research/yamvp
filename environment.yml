@@ -7,4 +7,5 @@ dependencies:
   - wheel
   - numpy
   - scipy
+  - sympy
   - matplotlib

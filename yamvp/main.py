@@ -25,6 +25,8 @@ from matplotlib.colors import to_rgb
 from scipy.ndimage import distance_transform_edt, binary_erosion
 from scipy.cluster.hierarchy import fclusterdata
 
+from .area_proportional_solver import solve_circles_2, solve_ellipses_3
+
 # ============================================================================
 # Utility helpers (standalone; no external module dependency)
 # ============================================================================
@@ -153,60 +155,6 @@ def _cluster_points(points: np.ndarray, radius: float) -> List[np.ndarray]:
     centers = [points[labels == lab].mean(axis=0) for lab in np.unique(labels)]
     return centers
 
-def _circle_intersection_area(r1: float, r2: float, d: float) -> float:
-    """
-    Area of intersection of two circles of radii r1, r2 separated by distance d.
-    """
-    r1 = float(r1)
-    r2 = float(r2)
-    d = float(d)
-    if d >= r1 + r2:
-        return 0.0
-    if d <= abs(r1 - r2):
-        return float(np.pi * min(r1, r2) ** 2)
-
-    x = (d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1)
-    y = (d * d + r2 * r2 - r1 * r1) / (2.0 * d * r2)
-    x = float(np.clip(x, -1.0, 1.0))
-    y = float(np.clip(y, -1.0, 1.0))
-    alpha = float(np.arccos(x))
-    beta = float(np.arccos(y))
-    term = (-d + r1 + r2) * (d + r1 - r2) * (d - r1 + r2) * (d + r1 + r2)
-    term = max(0.0, term)
-    inter = r1 * r1 * alpha + r2 * r2 * beta - 0.5 * float(np.sqrt(term))
-    return float(inter)
-
-def _solve_circle_distance_for_area(r1: float, r2: float, target_area: float,
-                                    tol: float = 1e-6, max_iter: int = 100) -> float:
-    """
-    Given radii r1, r2 and desired intersection area (0 < target_area < area_small),
-    find distance d between centers such that the intersection area matches target_area.
-    """
-    r1 = float(r1)
-    r2 = float(r2)
-    target_area = float(target_area)
-
-    if target_area <= 0.0:
-        return r1 + r2
-
-    area_small = float(np.pi * min(r1, r2) ** 2)
-    if target_area >= area_small:
-        return 0.0
-
-    lo = abs(r1 - r2)
-    hi = r1 + r2
-
-    for _ in range(max_iter):
-        mid = 0.5 * (lo + hi)
-        val = _circle_intersection_area(r1, r2, mid)
-        if abs(val - target_area) <= tol * area_small:
-            return mid
-        if val > target_area:
-            lo = mid
-        else:
-            hi = mid
-
-    return 0.5 * (lo + hi)
 
 # ============================================================================
 # Geometry helpers (preserve the original layouts)
@@ -285,89 +233,12 @@ def _geom2(
     area_logic_ok = False
     edge_case = False
 
-    # Optional area-proportional scaling for N=2
+    # Optional area-proportional scaling for N=2 via external solver
     if area_proportional and values is not None:
-        arr = np.asarray(values, dtype=object)
-        if arr.shape == (2, 2):
-            flat = arr.ravel()
-
-            # 1) All inputs numbers or None
-            types_ok = True
-            for v in flat:
-                if v is None:
-                    continue
-                if not isinstance(v, numbers.Real):
-                    types_ok = False
-                    break
-
-            # 2) No negatives
-            if types_ok:
-                for v in flat:
-                    if v is None:
-                        continue
-                    if float(v) < 0.0:
-                        types_ok = False
-                        break
-
-            if types_ok:
-                v00 = arr[0, 0]
-                v01 = arr[0, 1]  # B-only
-                v10 = arr[1, 0]  # A-only
-                v11 = arr[1, 1]  # intersection
-                regs = [v01, v10, v11]
-
-                # Require explicit numeric values for non-complement regions
-                if any(v is None for v in regs):
-                    types_ok = False
-
-            if types_ok:
-                # More than one zero (excluding complement) -> bail out to original geometry
-                zero_count = sum(
-                    1 for v in regs
-                    if v is not None and float(v) == 0.0
-                )
-                if zero_count > 1:
-                    types_ok = False
-
-            if types_ok:
-                a_only = float(v10)
-                b_only = float(v01)
-                both = float(v11)
-
-                A_total = a_only + both
-                B_total = b_only + both
-
-                if A_total > 0.0 and B_total > 0.0:
-                    area_logic_ok = True
-
-                    # Scale radii so their areas reflect totals up to a global factor
-                    if A_total >= B_total:
-                        radA = r0
-                        radB = r0 * np.sqrt(B_total / A_total)
-                        total_big = A_total
-                    else:
-                        radB = r0
-                        radA = r0 * np.sqrt(A_total / B_total)
-                        total_big = B_total
-
-                    # Global proportionality constant so that big set area ~ total_big
-                    k = float(np.pi * (r0 ** 2)) / float(total_big)
-                    target_intersection_area = k * both
-
-                    # Edge cases for distance
-                    if both <= 0.0:
-                        # No intersection -> circles just touch externally
-                        d = radA + radB
-                        edge_case = True
-                    elif a_only == 0.0 or b_only == 0.0:
-                        # A-B == 0 or B-A == 0: internal tangency
-                        # d + r_small = r_big  => d = |r_big - r_small|
-                        d = abs(radA - radB)
-                        edge_case = True
-                    else:
-                        # General case: match intersection area
-                        d = _solve_circle_distance_for_area(radA, radB, target_intersection_area)
-                # else: leave area_logic_ok False -> fall back to default geometry
+        res = solve_circles_2(values, base_radius=r0)
+        if res is not None:
+            radA, radB, d, edge_case = res
+            area_logic_ok = True
 
     # If area-proportional geometry is active, shift centers using the asymmetric formula
     if area_logic_ok:
@@ -492,10 +363,246 @@ def _geom2(
         "limits": (xmin, xmax, ymin, ymax),
         "region_offsets": region_offsets,
         "size_unit": size_unit,
+        # NEW: tell renderer that we used the optimizer so 0 labels can be suppressed
+        "suppress_zero_labels": bool(area_proportional and area_logic_ok),
     }
 
-def _geom3(sample_res: int = 800, spacing: float = 1.12):
-    """Three circles at the vertices of an equilateral triangle (centroid at origin)."""
+def _geom3(
+    sample_res: int = 800,
+    spacing: float = 1.12,
+    radius: Optional[float] = None,
+    pair_sep_factor: Optional[float] = None,
+    area_proportional: bool = False,
+    values: Optional[np.ndarray] = None,
+):
+    """Three circles (or ellipses) for N=3.
+
+    Default: three circles at the vertices of an equilateral triangle (centroid at origin).
+
+    If `area_proportional` is True and `values` is a fully-specified 2x2x2 table
+    of non-negative numbers (or None), attempt to find three ellipses whose atomic regions
+    approximate those values using `solve_ellipses_3`. If the solver returns None,
+    fall back to the original circular geometry.
+    """
+    # Attempt area-proportional 3-ellipse geometry first
+    if area_proportional and values is not None:
+        arr_obj = np.asarray(values, dtype=object)
+        if arr_obj.shape == (2, 2, 2):
+            # Let the solver handle None->0, zeros, penalties etc.
+            res = solve_ellipses_3(arr_obj, verbose=True)
+            if res is not None:
+                ellipse_params, best_loss, best_quality, history = res
+                ep = np.asarray(ellipse_params, dtype=float).reshape(3, 5)
+
+                centers: List[Tuple[float, float]] = []
+                radii: List[Tuple[float, float]] = []
+                angles: List[float] = []
+
+                for i in range(3):
+                    cx, cy, a, b, theta_rad = ep[i]
+                    centers.append((float(cx), float(cy)))
+                    radii.append((float(abs(a)), float(abs(b))))
+                    angles.append(float(np.degrees(theta_rad)))
+
+                # Bounds & grid from rotated envelopes
+                envs = []
+                for (cx, cy), (rx, ry), ang_deg in zip(centers, radii, angles):
+                    wx, wy = _rotated_envelope(rx, ry, ang_deg)
+                    envs.append((cx - wx, cx + wx, cy - wy, cy + wy))
+
+                xmin = min(e[0] for e in envs)
+                xmax = max(e[1] for e in envs)
+                ymin = min(e[2] for e in envs)
+                ymax = max(e[3] for e in envs)
+
+                size_unit = max(max(rx, ry) for (rx, ry) in radii)
+
+                nx = int(sample_res); ny = int(sample_res)
+                xs = np.linspace(xmin, xmax, nx); ys = np.linspace(ymin, ymax, ny)
+                X, Y = np.meshgrid(xs, ys)
+
+                memberships = []
+                for (cx, cy), (rx, ry), ang_deg in zip(centers, radii, angles):
+                    memberships.append(_ellipse_mask(X, Y, cx, cy, rx, ry, ang_deg))
+
+                centers_arr = np.array(centers, dtype=float)
+                grand = centers_arr.mean(axis=0)
+
+                # ---- Class label placement using region arcs on each ellipse ----
+                region_masks = _disjoint_region_masks(memberships)
+                fields = []
+                for (cx, cy), (rx, ry), ang_deg in zip(centers, radii, angles):
+                    fields.append(_ellipse_field(X, Y, cx, cy, rx, ry, ang_deg))
+                fields = np.stack(fields, axis=-1)
+
+                label_gap_units = 0.1
+                label_positions: List[Tuple[float, float, float]] = [None, None, None]  # type: ignore
+
+                # Per-class candidate regions (prefer “only” region, otherwise pick largest)
+                class_region_candidates = [
+                    [(1, 0, 0), (1, 1, 0), (1, 0, 1), (1, 1, 1)],  # A
+                    [(0, 1, 0), (1, 1, 0), (0, 1, 1), (1, 1, 1)],  # B
+                    [(0, 0, 1), (1, 0, 1), (0, 1, 1), (1, 1, 1)],  # C
+                ]
+
+                for cls_idx in range(3):
+                    cand_keys = class_region_candidates[cls_idx]
+                    chosen_key = None
+
+                    # 1) Prefer A-only / B-only / C-only region
+                    primary_mask = region_masks.get(cand_keys[0])
+                    if primary_mask is not None and primary_mask.any():
+                        chosen_key = cand_keys[0]
+                    else:
+                        # 2) Otherwise pick the largest region involving this class
+                        best_cnt = 0
+                        for k in cand_keys[1:]:
+                            mk = region_masks.get(k)
+                            if mk is None:
+                                continue
+                            cnt = int(mk.sum())
+                            if cnt > 0 and cnt > best_cnt:
+                                best_cnt = cnt
+                                chosen_key = k
+
+                    if chosen_key is None:
+                        continue
+
+                    reg_mask = region_masks[chosen_key]
+                    if not reg_mask.any():
+                        continue
+
+                    # Region boundary
+                    eroded = binary_erosion(reg_mask, structure=np.ones((3, 3), bool), border_value=0)
+                    boundary = reg_mask & (~eroded)
+                    if not boundary.any():
+                        continue
+
+                    field_i = fields[..., cls_idx]
+                    # Boundary points of this region that lie along ellipse cls_idx
+                    eps = 0.02
+                    mask_arc = boundary & (np.abs(field_i - 1.0) < eps)
+                    if not mask_arc.any():
+                        mask_arc = boundary & (np.abs(field_i - 1.0) < 0.05)
+                    if not mask_arc.any():
+                        mask_arc = boundary & (np.abs(field_i - 1.0) < 0.12)
+                    if not mask_arc.any():
+                        continue
+
+                    yy, xx = np.where(mask_arc)
+                    xs_arc = X[yy, xx].astype(float)
+                    ys_arc = Y[yy, xx].astype(float)
+
+                    cx_i, cy_i = centers[cls_idx]
+                    rx_i, ry_i = radii[cls_idx]
+                    ang_deg_i = angles[cls_idx]
+                    th = float(np.deg2rad(ang_deg_i))
+                    cos_th = np.cos(th)
+                    sin_th = np.sin(th)
+
+                    # world -> local
+                    dx = xs_arc - cx_i
+                    dy = ys_arc - cy_i
+                    x_loc = dx * cos_th + dy * sin_th
+                    y_loc = -dx * sin_th + dy * cos_th
+
+                    x_norm = x_loc / rx_i
+                    y_norm = y_loc / ry_i
+                    t = np.arctan2(y_norm, x_norm)
+
+                    # circular mean of angles ~ arc bisector
+                    mean_sin = float(np.sin(t).mean())
+                    mean_cos = float(np.cos(t).mean())
+                    if mean_sin == 0.0 and mean_cos == 0.0:
+                        continue
+                    t_mid = float(np.arctan2(mean_sin, mean_cos))
+                    cos_tm = np.cos(t_mid)
+                    sin_tm = np.sin(t_mid)
+
+                    # support point on ellipse at parameter t_mid
+                    xL = rx_i * cos_tm
+                    yL = ry_i * sin_tm
+                    px = cx_i + xL * cos_th - yL * sin_th
+                    py = cy_i + xL * sin_th + yL * cos_th
+
+                    # Outward normal via gradient in local frame -> world
+                    grad_local = np.array(
+                        [2.0 * xL / (rx_i**2), 2.0 * yL / (ry_i**2)],
+                        float,
+                    )
+                    n_world = np.array(
+                        [
+                            cos_th * grad_local[0] - sin_th * grad_local[1],
+                            sin_th * grad_local[0] + cos_th * grad_local[1],
+                        ],
+                        float,
+                    )
+                    n_norm = float(np.linalg.norm(n_world))
+                    if n_norm < 1e-12:
+                        v = centers_arr[cls_idx] - grand
+                        nv = float(np.linalg.norm(v))
+                        if nv < 1e-12:
+                            n_world = np.array([0.0, 1.0])
+                        else:
+                            n_world = v / nv
+                    else:
+                        n_world /= n_norm
+
+                    # Tangent direction (rotate normal by -90°)
+                    t_world = np.array([+n_world[1], -n_world[0]], float)
+
+                    # Place label just outside the ellipse along the normal
+                    gap = label_gap_units * size_unit
+                    label_xy = np.array([px, py], float) + gap * n_world
+
+                    angle_text = float(np.degrees(np.arctan2(t_world[1], t_world[0])))
+                    angle_text = _normalize_angle_90(angle_text)
+
+                    label_positions[cls_idx] = (
+                        float(label_xy[0]),
+                        float(label_xy[1]),
+                        angle_text,
+                    )
+
+                # Fallback: for any label still missing, push outward from grand center
+                for i in range(3):
+                    if label_positions[i] is not None:
+                        continue
+                    cx_i, cy_i = centers[i]
+                    c_vec = np.array([cx_i, cy_i], float)
+                    v = c_vec - grand
+                    n = float(np.linalg.norm(v))
+                    if n < 1e-9:
+                        u = np.array([0.0, 1.0], float)
+                    else:
+                        u = v / n
+                    r_eff = max(radii[i])
+                    label_xy = c_vec + u * (1.35 * r_eff)
+                    label_positions[i] = (float(label_xy[0]), float(label_xy[1]), 0.0)
+
+                complement_pos = (float(grand[0]), float(ymin - 0.35 * size_unit))
+
+                region_label_method_default = "visual_center"
+                region_label_method_overrides: Dict[Tuple[int, int, int], str] = {}
+
+                return {
+                    "centers": centers,
+                    "radii":   radii,
+                    "angles":  angles,
+                    "X": X, "Y": Y,
+                    "membership": memberships,
+                    "label_positions": label_positions,
+                    "complement_pos": complement_pos,
+                    "limits": (xmin, xmax, ymin, ymax),
+                    "region_offsets": {},
+                    "size_unit": size_unit,
+                    "region_label_method_default": region_label_method_default,
+                    "region_label_method_overrides": region_label_method_overrides,
+                    # tell renderer that optimization succeeded so it can hide 0 labels
+                    "suppress_zero_labels": True,
+                }
+
+    # Fallback: original equilateral 3-circle geometry
     r = 2.0
     s = float(spacing) * r
 
@@ -522,13 +629,13 @@ def _geom3(sample_res: int = 800, spacing: float = 1.12):
     A = np.array([cxA, cyA]); B = np.array([cxB, cyB]); C = np.array([cxC, cyC])
     grand = (A + B + C) / 3.0
 
-    def _out(p, k=1.22):
+    def _out_default(p, k=1.22):
         v = p - grand
         n = np.linalg.norm(v)
         u = v / n if n > 1e-9 else np.array([0.0, 1.0])
         return p + u * (k * r)
 
-    posA, posB, posC = tuple(_out(A)), tuple(_out(B)), tuple(_out(C))
+    posA, posB, posC = tuple(_out_default(A)), tuple(_out_default(B)), tuple(_out_default(C))
     label_positions = [
         (posA[0], posA[1],   0.0),
         (posB[0], posB[1], -60.0),
@@ -844,9 +951,9 @@ def venn(
     rotate_region_labels: Optional[bool] = None,
     color_mixing: Union[str, Callable[[Sequence[np.ndarray]], np.ndarray]] = "subtractive",
     text_color: Optional[str] = "black",
-    region_label_fontsize: int = 12,
-    class_name_fontsize: int = 16,
-    title_fontsize: int = 20,
+    region_label_fontsize: Optional[int] = None,
+    class_name_fontsize: Optional[int] = None,
+    title_fontsize: Optional[int] = None,
     area_proportional: bool = False,
     **kwargs,
 ) -> Optional[Figure]:
@@ -894,9 +1001,11 @@ def venn(
     area_proportional : bool
         If True and N==2 with suitable numeric inputs, scale the two circles so
         that their areas (and the intersection area, via center distance) are
-        proportional to the provided region values. If the inputs are not all
-        numbers/None, contain negatives, or more than one non-complement region
-        is 0, this flag is ignored and the original geometry is used.
+        proportional to the provided region values. For N==3 and fully specified
+        non-negative numeric values, attempt to find three ellipses with areas
+        proportional to the region values via `solve_ellipses_3`. If the inputs
+        are invalid or no solution is found, this flag is ignored and the
+        original geometry is used.
     kwargs : forwarded to the corresponding geometry helper
     """
     # ---- Determine N and build geometry ----
@@ -907,6 +1016,9 @@ def venn(
         if arr.shape != (2,):
             raise ValueError("For N=1, values must have shape (2,) as [0, 1].")
         geom = _geom1(**{k: v for k, v in kwargs.items() if k in {"radius", "center_xy", "sample_res"}})
+        region_label_fontsize = 16 if region_label_fontsize is None else region_label_fontsize
+        class_name_fontsize = 20 if class_name_fontsize is None else class_name_fontsize
+        title_fontsize = 22 if title_fontsize is None else title_fontsize
 
     elif arr.ndim == 2:
         N = 2
@@ -914,12 +1026,20 @@ def venn(
             raise ValueError("For N=2, values must be 2x2.")
         geom_kwargs = {k: v for k, v in kwargs.items() if k in {"radius", "d_factor", "sample_res", "spacing_ratio"}}
         geom = _geom2(area_proportional=area_proportional, values=arr, **geom_kwargs)
+        region_label_fontsize = 16 if region_label_fontsize is None else region_label_fontsize
+        class_name_fontsize = 20 if class_name_fontsize is None else class_name_fontsize
+        title_fontsize = 22 if title_fontsize is None else title_fontsize
 
     elif arr.ndim == 3:
         N = 3
         if arr.shape != (2, 2, 2):
             raise ValueError("For N=3, values must be 2x2x2.")
-        geom = _geom3(**{k: v for k, v in kwargs.items() if k in {"radius", "pair_sep_factor", "sample_res"}})
+        geom_kwargs = {k: v for k, v in kwargs.items() if k in {"radius", "pair_sep_factor", "sample_res", "spacing"}}
+        geom = _geom3(area_proportional=area_proportional, values=arr, **geom_kwargs)
+        
+        region_label_fontsize = 12 if region_label_fontsize is None else region_label_fontsize
+        class_name_fontsize = 16 if class_name_fontsize is None else class_name_fontsize
+        title_fontsize = 20 if title_fontsize is None else title_fontsize
         if rotate_region_labels is None:
             rotate_region_labels = False
 
@@ -928,12 +1048,19 @@ def venn(
         if arr.shape != (2, 2, 2, 2):
             raise ValueError("For N=4, values must be 2x2x2x2.")
         geom = _geom4(**kwargs)
+        
+        region_label_fontsize = 12 if region_label_fontsize is None else region_label_fontsize
+        class_name_fontsize = 16 if class_name_fontsize is None else class_name_fontsize
+        title_fontsize = 20 if title_fontsize is None else title_fontsize
 
     elif arr.ndim == 5:
         N = 5
         if arr.shape != (2, 2, 2, 2, 2):
             raise ValueError("For N=5, values must be 2x2x2x2x2.")
         geom = _geom5(**kwargs)
+        region_label_fontsize = 12 if region_label_fontsize is None else region_label_fontsize
+        class_name_fontsize = 16 if class_name_fontsize is None else class_name_fontsize
+        title_fontsize = 20 if title_fontsize is None else title_fontsize
 
     else:
         raise ValueError("Only N in {1,2,3,4,5} are supported.")
@@ -1033,6 +1160,8 @@ def venn(
     region_offsets = geom.get("region_offsets", {})
     region_label_method_default = geom.get("region_label_method_default", None)
     region_label_method_overrides = geom.get("region_label_method_overrides", {})
+    # NEW: did we use an area-proportional optimizer?
+    suppress_zero_labels = bool(geom.get("suppress_zero_labels", False))
 
     # Compute ideal rotations per region (if enabled)
     region_rotations: Dict[Tuple[int, ...], float] = {}
@@ -1112,8 +1241,8 @@ def venn(
                 # Order corners around their centroid to define sides
                 C = np.array(corners)
                 gc = C.mean(axis=0)
-                angles = np.arctan2(C[:, 1] - gc[1], C[:, 0] - gc[0])
-                order = np.argsort(angles)
+                angles_arr = np.arctan2(C[:, 1] - gc[1], C[:, 0] - gc[0])
+                order = np.argsort(angles_arr)
                 C = C[order]  # A,B,C,D around
 
                 # Opposite side midpoints
@@ -1167,8 +1296,16 @@ def venn(
         if not mask.any():
             continue
         value = arr[key]
+        # Respect None as "no label"
         if value is None:
             continue
+        # NEW: when optimization was used, hide numeric 0 labels as well
+        if suppress_zero_labels and isinstance(value, numbers.Real):
+            try:
+                if float(value) == 0.0:
+                    continue
+            except Exception:
+                pass
 
         if N == 2:
             # N=2 special logic: region labels at the center of the line segment
@@ -1232,9 +1369,17 @@ def venn(
 
     # ---- Complement (all-zeros) ----
     zeros = (0,) * N
-    if arr[zeros] is not None:
+    comp_val = arr[zeros]
+    if comp_val is not None:
+        if suppress_zero_labels and isinstance(comp_val, numbers.Real):
+            try:
+                if float(comp_val) == 0.0:
+                    comp_val = None
+            except Exception:
+                pass
+    if comp_val is not None:
         cx, cy = geom["complement_pos"]
-        ax.text(cx, cy, f"{arr[zeros]}", ha="center", va="center", fontsize=region_label_fontsize)
+        ax.text(cx, cy, f"{comp_val}", ha="center", va="center", fontsize=region_label_fontsize)
 
     # ---- Class labels ----
     for (x, y, rot), name, col in zip(geom["label_positions"], class_names, rgbs):
@@ -1245,7 +1390,7 @@ def venn(
     limit_pad_units = 0.1
     label_pts = [(xy[0], xy[1]) for xy in geom["label_positions"]]
     extras = []
-    if arr[zeros] is not None:
+    if comp_val is not None:
         extras.append(geom["complement_pos"])
     if label_pts or extras:
         pts = np.array(label_pts + extras)
