@@ -68,8 +68,12 @@ if __name__ == "__main__":
     venn(vals4, ["Alpha", "Beta", "Gamma", "Delta"], color_mixing=color_mix_multiply, outfile="img/venn4_demo_colors_multiply_mixing.png", text_color="white")
     
     # 2-set Area Proportional
-    rand2 = np.random.randint(0, 1000, size=(2, 2))
+    rand2 = np.array(np.random.randint(0, 1000, size=(2, 2)), dtype=object)
+    rand2[0,0] = None
     venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "img/rand2_demo.png")
+    
+    rand2 = np.random.randint(0, 1000, size=(2, 2))
+    venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "img/rand2_demo1.png")
     
     rand2 = np.random.randint(0, 1000, size=(2, 2))
     rand2[1,1] = 0
@@ -83,9 +87,13 @@ if __name__ == "__main__":
     venn(rand2, ["Alpha", "Beta"], area_proportional=True, outfile = "img/rand2_demo4.png")
     
     # 3-set Area Proportional
+    
     rand3 = np.array(np.random.randint(0, 1000, size=(2, 2, 2)), dtype=object)
     rand3[0,0,0] = None
     venn(rand3, ["Alpha", "Beta", "Gamma"], area_proportional=True, outfile = "img/rand3_demo.png")
+    
+    rand3 = np.array(np.random.randint(0, 1000, size=(2, 2, 2)), dtype=object)
+    venn(rand3, ["Alpha", "Beta", "Gamma"], area_proportional=True, outfile = "img/rand3_demo1.png")
     
     rand3 = np.array(np.random.randint(0, 1000, size=(2, 2, 2)), dtype=object)
     rand3[0,0,0] = None
