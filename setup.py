@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name="yamvp",
-    version="0.4",
+    version="0.5",
     author="Bálint Csanády",
     python_requires='>3.6',
     author_email="csbalint@protonmail.ch",
@@ -23,5 +23,5 @@ setup(
         "Operating System :: OS Independent",
         "Topic :: Scientific/Engineering :: Mathematics",
     ],
-    install_requires=["numpy", "scipy", "matplotlib"],
+    install_requires=["numpy", "scipy", "matplotlib", "shapely"],
 )

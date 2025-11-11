@@ -24,6 +24,7 @@ from matplotlib.patches import Ellipse
 from matplotlib.colors import to_rgb
 from scipy.ndimage import distance_transform_edt, binary_erosion
 from scipy.cluster.hierarchy import fclusterdata
+import colorsys
 
 from .area_proportional_solver import solve_circles_2, solve_ellipses_3
 
@@ -100,6 +101,37 @@ def _color_mix_subtractive(colors):
         return np.zeros(3, float)
     arr = np.stack([np.array(c, float) for c in colors], axis=0)
     return np.abs(1.0 - (np.prod(1-arr, axis=0))*(len(colors)**0.25))
+
+def _color_mix_subtractive_corr(colors,n):
+    """
+    Mix colors by subtracive mixing.
+    """
+    # Stack and cast to float
+    rgb = np.stack([np.array(c, float) for c in colors], axis=0)
+
+    # Detect input scale ([0,1] or [0,255]) and normalize if needed
+    max_val = rgb.max()
+    if max_val > 1.0:
+        rgb_norm = rgb / 255.0
+        scale_back = 255.0
+    else:
+        rgb_norm = rgb
+        scale_back = 1.0
+
+    # 1) Simple RGB average (in normalized space)
+    avg_rgb = rgb_norm.mean(axis=0)
+
+    # 2) Convert the average color to HSV
+    h, s, v = colorsys.rgb_to_hsv(*avg_rgb)
+    
+    k = len(colors)
+    sat = (0.75 - 0.75*(k / float(n)))
+    sat = float(np.clip(sat, 0.0, 1.0))
+    
+    l = (0.5 + 0.5*((k-1) / float(n)))
+    l = float(np.clip(l, 0.0, 1.0))
+    
+    return np.array(colorsys.hls_to_rgb(h, l, sat), dtype=float)
 
 def _ellipse_field(
     X: np.ndarray, Y: np.ndarray,
@@ -945,6 +977,7 @@ def venn(
     values,
     class_names: Sequence[str],
     colors: Optional[Sequence[Union[str, tuple]]] = None,
+    boundary_colors: Optional[Sequence[Union[str, tuple]]] = None,
     title: Optional[str] = None,
     outfile: Optional[str] = None,
     dpi: int = 100,
@@ -1069,15 +1102,25 @@ def venn(
         raise ValueError(f"class_names must have length {N}")
 
     # ---- Colors ----
+    if boundary_colors is None:
+        if colors is None:
+            cycle = ["#007b00", "#b05200", "#005491", "#6c24b0", "#960202"]
+            boundary_colors = [cycle[i % len(cycle)] for i in range(N)]
+        else:
+            boundary_colors = colors
     if colors is None:
-        cycle = ['#2ca02c', '#ff7f0e', '#1f77b4', '#9467bd', "#d62728"]
+        cycle = ["#4ce14c", "#ff8e2c", "#4eaef3", "#b978f6", "#f75151"]
         colors = [cycle[i % len(cycle)] for i in range(N)]
+    
     rgbs = list(map(_rgb, colors))
+    boundary_rgbs = list(map(_rgb, boundary_colors))
 
     # ---- Color mixing callback ----
     if isinstance(color_mixing, str):
         if color_mixing == "subtractive":
             mixing_cb = _color_mix_subtractive
+        elif color_mixing == "subtractive_corr":
+            mixing_cb = lambda x: _color_mix_subtractive_corr(x,N)
         elif color_mixing == "average":
             mixing_cb = _color_mix_average
         elif color_mixing == "alpha":
@@ -1128,7 +1171,7 @@ def venn(
     outline_lw = 2.0
 
     # Pass 1: fully opaque outlines beneath (alpha=1) to mask seams
-    for (cx, cy), (rx, ry), ang, col in zip(geom["centers"], geom["radii"], geom["angles"], rgbs):
+    for (cx, cy), (rx, ry), ang, col in zip(geom["centers"], geom["radii"], geom["angles"], boundary_rgbs):
         ax.add_patch(
             Ellipse(
                 (cx, cy), 2 * rx, 2 * ry, angle=ang,
@@ -1139,7 +1182,7 @@ def venn(
         )
 
     # Pass 2: outlines with global `alpha` 0.5 on top
-    for (cx, cy), (rx, ry), ang, col in zip(geom["centers"], geom["radii"], geom["angles"], rgbs):
+    for (cx, cy), (rx, ry), ang, col in zip(geom["centers"], geom["radii"], geom["angles"], boundary_rgbs):
         ax.add_patch(
             Ellipse(
                 (cx, cy), 2 * rx, 2 * ry, angle=ang,
@@ -1382,7 +1425,7 @@ def venn(
         ax.text(cx, cy, f"{comp_val}", ha="center", va="center", fontsize=region_label_fontsize)
 
     # ---- Class labels ----
-    for (x, y, rot), name, col in zip(geom["label_positions"], class_names, rgbs):
+    for (x, y, rot), name, col in zip(geom["label_positions"], class_names, boundary_rgbs):
         ax.text(x, y, name, ha="center", va="center", fontsize=class_name_fontsize,
                 color=tuple(col), rotation=rot, rotation_mode="anchor")
 
